@@ -1,11 +1,13 @@
 """
 MateTutor - Tu Tutor de Matemáticas para el ICFES
-Aplicación Streamlit que usa Google Gemini AI para tutorías de matemáticas
+Aplicación Streamlit que usa Groq + Llama 3.2 Vision para tutorías de matemáticas
 """
 
 import streamlit as st
-import google.generativeai as genai
+from groq import Groq
 from PIL import Image
+import base64
+import io
 
 # Configuración de la página
 st.set_page_config(
@@ -134,54 +136,38 @@ st.markdown("""
 # Inicializar el estado de la sesión
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    st.session_state.chat = None
+    st.session_state.groq_client = None
     st.session_state.api_key_configured = False
-    st.session_state.pending_image = None
 
-# Configurar la API de Gemini
-def configure_gemini():
-    """Configura la API de Gemini con la clave de Streamlit Secrets"""
+# Configurar la API de Groq
+def configure_groq():
+    """Configura el cliente de Groq con la clave de Streamlit Secrets"""
     try:
-        api_key = st.secrets["GEMINI_API_KEY"]
-        genai.configure(api_key=api_key)
+        api_key = st.secrets["GROQ_API_KEY"]
+        st.session_state.groq_client = Groq(api_key=api_key)
         st.session_state.api_key_configured = True
         return True
     except Exception as e:
-        st.error(f"⚠️ Error al configurar la API de Gemini: {str(e)}")
-        st.info("💡 Asegúrate de configurar `GEMINI_API_KEY` en los Secrets de Streamlit.")
+        st.error(f"⚠️ Error al configurar la API de Groq: {str(e)}")
+        st.info("💡 Asegúrate de configurar `GROQ_API_KEY` en los Secrets de Streamlit.")
         return False
 
-# Inicializar el chat de Gemini
-def initialize_chat():
-    """Inicializa el chat de Gemini con el prompt del sistema"""
-    if st.session_state.chat is None:
-        try:
-            model = genai.GenerativeModel(
-                model_name='gemini-1.5-pro',
-                system_instruction=MATE_TUTOR_PROMPT
-            )
-            st.session_state.chat = model.start_chat(history=[])
-        except Exception as e:
-            st.error(f"Error al inicializar el chat: {str(e)}")
-            st.session_state.chat = None
-
-# Convertir imagen a formato compatible con Gemini
-def process_image(uploaded_file):
-    """Procesa la imagen subida y la convierte al formato de Gemini"""
+# Convertir imagen a base64
+def image_to_base64(image):
+    """Convierte una imagen PIL a base64"""
     try:
-        image = Image.open(uploaded_file)
-        return image
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        return f"data:image/png;base64,{img_str}"
     except Exception as e:
-        st.error(f"Error al procesar la imagen: {str(e)}")
+        st.error(f"Error al convertir imagen: {str(e)}")
         return None
 
-# Configurar Gemini al inicio
+# Configurar Groq al inicio
 if not st.session_state.api_key_configured:
-    if not configure_gemini():
+    if not configure_groq():
         st.stop()
-
-# Inicializar el chat
-initialize_chat()
 
 # Mostrar mensaje de bienvenida si no hay mensajes
 if len(st.session_state.messages) == 0:
@@ -217,12 +203,11 @@ if uploaded_file is not None:
             # Procesar imagen
             try:
                 image = Image.open(uploaded_file)
+                image_base64 = image_to_base64(image)
 
-                # Crear modelo temporal para esta consulta
-                model = genai.GenerativeModel(
-                    model_name='gemini-1.5-pro',
-                    system_instruction=MATE_TUTOR_PROMPT
-                )
+                if not image_base64:
+                    st.error("No se pudo procesar la imagen")
+                    st.stop()
 
                 # Agregar mensaje del usuario
                 st.session_state.messages.append({
@@ -231,17 +216,39 @@ if uploaded_file is not None:
                     "image": image
                 })
 
-                # Generar respuesta
-                with st.spinner("🤔 Analizando la imagen..."):
-                    response = model.generate_content([
-                        "Ayúdame con este problema de matemáticas. Recuerda usar el método socrático y no dar la respuesta directa.",
-                        image
-                    ])
+                # Generar respuesta con Groq
+                with st.spinner("🤔 Analizando la imagen con Llama Vision..."):
+                    response = st.session_state.groq_client.chat.completions.create(
+                        model="llama-3.2-90b-vision-preview",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": MATE_TUTOR_PROMPT
+                            },
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Ayúdame con este problema de matemáticas. Recuerda usar el método socrático y no dar la respuesta directa."
+                                    },
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": image_base64
+                                        }
+                                    }
+                                ]
+                            }
+                        ],
+                        temperature=0.7,
+                        max_tokens=2048
+                    )
 
-                    if response.text:
+                    if response.choices[0].message.content:
                         st.session_state.messages.append({
                             "role": "assistant",
-                            "content": response.text
+                            "content": response.choices[0].message.content
                         })
                     else:
                         st.session_state.messages.append({
@@ -253,26 +260,39 @@ if uploaded_file is not None:
 
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
-                st.info("💡 Intenta con una imagen más pequeña o en otro formato.")
+                st.info("💡 Verifica tu API key de Groq o intenta con otra imagen.")
 
 # Input del usuario (texto)
 if prompt := st.chat_input("Escribe tu pregunta de matemáticas..."):
     # Agregar mensaje del usuario
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Generar respuesta
+    # Generar respuesta con Groq
     try:
-        if st.session_state.chat is None:
-            initialize_chat()
+        # Preparar historial de mensajes para Groq
+        groq_messages = [{"role": "system", "content": MATE_TUTOR_PROMPT}]
 
-        response = st.session_state.chat.send_message(prompt, stream=True)
+        # Agregar mensajes previos (solo texto, sin imágenes)
+        for msg in st.session_state.messages[:-1]:  # Excluir el último (que acabamos de agregar)
+            if "image" not in msg:
+                groq_messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
 
-        full_response = ""
-        for chunk in response:
-            if chunk.text:
-                full_response += chunk.text
+        # Agregar el mensaje actual
+        groq_messages.append({"role": "user", "content": prompt})
 
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        # Llamar a Groq
+        response = st.session_state.groq_client.chat.completions.create(
+            model="llama-3.2-90b-text-preview",
+            messages=groq_messages,
+            temperature=0.7,
+            max_tokens=2048
+        )
+
+        assistant_response = response.choices[0].message.content
+        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
 
     except Exception as e:
         st.session_state.messages.append({
@@ -287,8 +307,6 @@ with st.sidebar:
     st.markdown("### ⚙️ Opciones")
     if st.button("🗑️ Limpiar conversación", use_container_width=True):
         st.session_state.messages = []
-        st.session_state.chat = None
-        initialize_chat()
         st.rerun()
 
     st.markdown("---")
@@ -296,8 +314,8 @@ with st.sidebar:
     # Modo debug
     debug_mode = st.checkbox("🐛 Modo Debug", value=False)
     if debug_mode:
-        st.markdown("**Estado del Chat:**")
-        st.write(f"Chat inicializado: {st.session_state.chat is not None}")
+        st.markdown("**Estado del Sistema:**")
+        st.write(f"Groq Client: {st.session_state.groq_client is not None}")
         st.write(f"API configurada: {st.session_state.api_key_configured}")
         st.write(f"Mensajes: {len(st.session_state.messages)}")
 
@@ -313,5 +331,5 @@ with st.sidebar:
     """)
 
     st.markdown("---")
-    st.markdown("Desarrollado con ❤️ usando Streamlit y Google Gemini AI")
+    st.markdown("Desarrollado con ❤️ usando Streamlit y Groq (Llama 3.2 Vision)")
 
