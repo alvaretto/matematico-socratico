@@ -222,15 +222,11 @@ if uploaded_file is not None:
                         model="llama-3.2-90b-vision-preview",
                         messages=[
                             {
-                                "role": "system",
-                                "content": MATE_TUTOR_PROMPT
-                            },
-                            {
                                 "role": "user",
                                 "content": [
                                     {
                                         "type": "text",
-                                        "text": "Ayúdame con este problema de matemáticas. Recuerda usar el método socrático y no dar la respuesta directa."
+                                        "text": f"{MATE_TUTOR_PROMPT}\n\nAyúdame con este problema de matemáticas. Recuerda usar el método socrático y no dar la respuesta directa."
                                     },
                                     {
                                         "type": "image_url",
@@ -270,18 +266,32 @@ if prompt := st.chat_input("Escribe tu pregunta de matemáticas..."):
     # Generar respuesta con Groq
     try:
         # Preparar historial de mensajes para Groq
-        groq_messages = [{"role": "system", "content": MATE_TUTOR_PROMPT}]
+        groq_messages = []
 
-        # Agregar mensajes previos (solo texto, sin imágenes)
-        for msg in st.session_state.messages[:-1]:  # Excluir el último (que acabamos de agregar)
-            if "image" not in msg:
-                groq_messages.append({
-                    "role": msg["role"],
-                    "content": msg["content"]
-                })
+        # Agregar el prompt del sistema como primer mensaje del usuario si es el primero
+        if len(st.session_state.messages) == 1:
+            groq_messages.append({
+                "role": "user",
+                "content": f"{MATE_TUTOR_PROMPT}\n\n{prompt}"
+            })
+        else:
+            # Agregar mensajes previos (solo texto, sin imágenes)
+            for i, msg in enumerate(st.session_state.messages[:-1]):
+                if "image" not in msg:
+                    # Incluir el prompt del sistema en el primer mensaje
+                    if i == 0 and msg["role"] == "user":
+                        groq_messages.append({
+                            "role": msg["role"],
+                            "content": f"{MATE_TUTOR_PROMPT}\n\n{msg['content']}"
+                        })
+                    else:
+                        groq_messages.append({
+                            "role": msg["role"],
+                            "content": msg["content"]
+                        })
 
-        # Agregar el mensaje actual
-        groq_messages.append({"role": "user", "content": prompt})
+            # Agregar el mensaje actual
+            groq_messages.append({"role": "user", "content": prompt})
 
         # Llamar a Groq
         response = st.session_state.groq_client.chat.completions.create(
