@@ -6,8 +6,6 @@ Aplicación Streamlit que usa Google Gemini AI para tutorías de matemáticas
 import streamlit as st
 import google.generativeai as genai
 from PIL import Image
-import io
-import base64
 
 # Configuración de la página
 st.set_page_config(
@@ -198,122 +196,90 @@ for message in st.session_state.messages:
         if "image" in message:
             st.image(message["image"], use_container_width=True)
 
-# Widget para subir imágenes (fuera del chat input)
+# Widget para subir imágenes
 uploaded_file = st.file_uploader(
-    "📎 Adjuntar imagen de la pregunta (opcional)",
+    "📎 Sube una imagen del problema (opcional)",
     type=["png", "jpg", "jpeg"],
-    help="Sube una imagen de la pregunta del ICFES"
+    help="Sube una foto de la pregunta del ICFES"
 )
 
-# Procesar imagen cuando se sube
+# Si hay una imagen subida, mostrar preview y botón
 if uploaded_file is not None:
-    st.image(uploaded_file, caption="Vista previa de la imagen", use_container_width=True)
-
     col1, col2 = st.columns([3, 1])
+
     with col1:
-        prompt_with_image = st.text_input(
-            "Escribe tu pregunta sobre la imagen (opcional):",
-            placeholder="Ej: ¿Cómo resuelvo este problema?",
-            key="prompt_with_image"
-        )
+        st.image(uploaded_file, caption="Vista previa", width=300)
+
     with col2:
-        send_image_button = st.button("📤 Enviar", type="primary", use_container_width=True)
-
-    if send_image_button:
-        # Verificar que el chat esté inicializado
-        if st.session_state.chat is None:
-            st.error("Error: El chat no está inicializado. Por favor, recarga la página.")
-            st.stop()
-
-        # Procesar la imagen
-        image = process_image(uploaded_file)
-        if image:
-            # Preparar el mensaje
-            message_content = prompt_with_image if prompt_with_image else "📷 [Imagen adjunta - ayúdame con este problema]"
-
-            # Agregar mensaje del usuario al historial
-            user_message = {"role": "user", "content": message_content, "image": image}
-            st.session_state.messages.append(user_message)
-
-            # Generar respuesta del asistente
+        st.write("")  # Espaciado
+        st.write("")  # Espaciado
+        if st.button("📤 Analizar Imagen", type="primary", use_container_width=True, key="analyze_btn"):
+            # Procesar imagen
             try:
-                # Preparar partes del mensaje
-                message_parts = []
-                if prompt_with_image:
-                    message_parts.append(prompt_with_image)
-                else:
-                    message_parts.append("Ayúdame con este problema de matemáticas que aparece en la imagen.")
+                image = Image.open(uploaded_file)
 
-                # Agregar imagen
-                message_parts.append(image)
+                # Crear modelo temporal para esta consulta
+                model = genai.GenerativeModel(
+                    model_name='gemini-1.5-flash',
+                    system_instruction=MATE_TUTOR_PROMPT
+                )
 
-                # Enviar mensaje a Gemini
-                with st.spinner("🤔 MateTutor está analizando la imagen..."):
-                    response = st.session_state.chat.send_message(message_parts, stream=True)
+                # Agregar mensaje del usuario
+                st.session_state.messages.append({
+                    "role": "user",
+                    "content": "📷 [Imagen del problema]",
+                    "image": image
+                })
 
-                    full_response = ""
-                    for chunk in response:
-                        if hasattr(chunk, 'text') and chunk.text:
-                            full_response += chunk.text
+                # Generar respuesta
+                with st.spinner("🤔 Analizando la imagen..."):
+                    response = model.generate_content([
+                        "Ayúdame con este problema de matemáticas. Recuerda usar el método socrático y no dar la respuesta directa.",
+                        image
+                    ])
 
-                    if not full_response:
-                        full_response = "Lo siento, no pude generar una respuesta. Por favor, intenta de nuevo."
+                    if response.text:
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": response.text
+                        })
+                    else:
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": "No pude analizar la imagen. ¿Puedes intentar con otra foto más clara?"
+                        })
 
-                    # Agregar respuesta del asistente al historial
-                    st.session_state.messages.append({"role": "assistant", "content": full_response})
+                st.rerun()
 
             except Exception as e:
-                error_message = f"❌ Error al procesar la imagen: {str(e)}"
-                st.error(error_message)
-                st.session_state.messages.append({"role": "assistant", "content": "Lo siento, hubo un error al procesar tu imagen. Por favor, intenta de nuevo."})
-
-            # Recargar para mostrar los mensajes
-            st.rerun()
-        else:
-            st.error("No se pudo procesar la imagen. Por favor, intenta con otra imagen.")
+                st.error(f"❌ Error: {str(e)}")
+                st.info("💡 Intenta con una imagen más pequeña o en otro formato.")
 
 # Input del usuario (texto)
-if prompt := st.chat_input("Escribe tu pregunta o describe la imagen..."):
-    # Preparar el contenido del mensaje
-    message_content = prompt
-    message_parts = [prompt]
+if prompt := st.chat_input("Escribe tu pregunta de matemáticas..."):
+    # Agregar mensaje del usuario
+    st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Agregar mensaje del usuario al historial
-    user_message = {"role": "user", "content": message_content}
-    st.session_state.messages.append(user_message)
+    # Generar respuesta
+    try:
+        if st.session_state.chat is None:
+            initialize_chat()
 
-    # Mostrar mensaje del usuario
-    with st.chat_message("user"):
-        st.markdown(message_content)
+        response = st.session_state.chat.send_message(prompt, stream=True)
 
-    # Generar respuesta del asistente
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
         full_response = ""
+        for chunk in response:
+            if chunk.text:
+                full_response += chunk.text
 
-        try:
-            # Enviar mensaje a Gemini con streaming
-            response = st.session_state.chat.send_message(message_parts, stream=True)
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
 
-            # Mostrar respuesta en streaming
-            for chunk in response:
-                if chunk.text:
-                    full_response += chunk.text
-                    message_placeholder.markdown(full_response + "▌")
+    except Exception as e:
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": f"Lo siento, hubo un error: {str(e)}"
+        })
 
-            # Mostrar respuesta final
-            message_placeholder.markdown(full_response)
-
-        except Exception as e:
-            error_message = "Lo siento, algo salió mal. Por favor, intenta de nuevo. 😔"
-            message_placeholder.markdown(error_message)
-            full_response = error_message
-            st.error(f"Error: {str(e)}")
-
-    # Agregar respuesta del asistente al historial
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-    # Recargar
     st.rerun()
 
 # Botón para limpiar el chat (en la barra lateral)
