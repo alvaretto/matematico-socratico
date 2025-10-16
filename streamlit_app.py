@@ -157,7 +157,7 @@ def initialize_chat():
     if st.session_state.chat is None:
         try:
             model = genai.GenerativeModel(
-                model_name='gemini-1.5-flash',
+                model_name='gemini-1.5-pro',
                 system_instruction=MATE_TUTOR_PROMPT
             )
             st.session_state.chat = model.start_chat(history=[])
@@ -220,7 +220,7 @@ if uploaded_file is not None:
 
                 # Crear modelo temporal para esta consulta
                 model = genai.GenerativeModel(
-                    model_name='gemini-1.5-flash',
+                    model_name='gemini-1.5-pro',
                     system_instruction=MATE_TUTOR_PROMPT
                 )
 
