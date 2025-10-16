@@ -157,11 +157,15 @@ def configure_gemini():
 def initialize_chat():
     """Inicializa el chat de Gemini con el prompt del sistema"""
     if st.session_state.chat is None:
-        model = genai.GenerativeModel(
-            model_name='gemini-2.0-flash-exp',
-            system_instruction=MATE_TUTOR_PROMPT
-        )
-        st.session_state.chat = model.start_chat(history=[])
+        try:
+            model = genai.GenerativeModel(
+                model_name='gemini-1.5-flash',
+                system_instruction=MATE_TUTOR_PROMPT
+            )
+            st.session_state.chat = model.start_chat(history=[])
+        except Exception as e:
+            st.error(f"Error al inicializar el chat: {str(e)}")
+            st.session_state.chat = None
 
 # Convertir imagen a formato compatible con Gemini
 def process_image(uploaded_file):
@@ -216,46 +220,57 @@ if uploaded_file is not None:
         send_image_button = st.button("📤 Enviar", type="primary", use_container_width=True)
 
     if send_image_button:
+        # Verificar que el chat esté inicializado
+        if st.session_state.chat is None:
+            st.error("Error: El chat no está inicializado. Por favor, recarga la página.")
+            st.stop()
+
         # Procesar la imagen
         image = process_image(uploaded_file)
         if image:
             # Preparar el mensaje
             message_content = prompt_with_image if prompt_with_image else "📷 [Imagen adjunta - ayúdame con este problema]"
-            message_parts = []
-
-            # Agregar texto si existe
-            if prompt_with_image:
-                message_parts.append(prompt_with_image)
-            else:
-                message_parts.append("Ayúdame con este problema de matemáticas")
-
-            # Agregar imagen
-            message_parts.append(image)
 
             # Agregar mensaje del usuario al historial
             user_message = {"role": "user", "content": message_content, "image": image}
             st.session_state.messages.append(user_message)
 
             # Generar respuesta del asistente
-            with st.spinner("MateTutor está analizando la imagen..."):
-                try:
-                    # Enviar mensaje a Gemini
+            try:
+                # Preparar partes del mensaje
+                message_parts = []
+                if prompt_with_image:
+                    message_parts.append(prompt_with_image)
+                else:
+                    message_parts.append("Ayúdame con este problema de matemáticas que aparece en la imagen.")
+
+                # Agregar imagen
+                message_parts.append(image)
+
+                # Enviar mensaje a Gemini
+                with st.spinner("🤔 MateTutor está analizando la imagen..."):
                     response = st.session_state.chat.send_message(message_parts, stream=True)
 
                     full_response = ""
                     for chunk in response:
-                        if chunk.text:
+                        if hasattr(chunk, 'text') and chunk.text:
                             full_response += chunk.text
+
+                    if not full_response:
+                        full_response = "Lo siento, no pude generar una respuesta. Por favor, intenta de nuevo."
 
                     # Agregar respuesta del asistente al historial
                     st.session_state.messages.append({"role": "assistant", "content": full_response})
 
-                except Exception as e:
-                    error_message = f"Lo siento, algo salió mal: {str(e)}"
-                    st.session_state.messages.append({"role": "assistant", "content": error_message})
+            except Exception as e:
+                error_message = f"❌ Error al procesar la imagen: {str(e)}"
+                st.error(error_message)
+                st.session_state.messages.append({"role": "assistant", "content": "Lo siento, hubo un error al procesar tu imagen. Por favor, intenta de nuevo."})
 
             # Recargar para mostrar los mensajes
             st.rerun()
+        else:
+            st.error("No se pudo procesar la imagen. Por favor, intenta con otra imagen.")
 
 # Input del usuario (texto)
 if prompt := st.chat_input("Escribe tu pregunta o describe la imagen..."):
@@ -309,18 +324,28 @@ with st.sidebar:
         st.session_state.chat = None
         initialize_chat()
         st.rerun()
-    
+
+    st.markdown("---")
+
+    # Modo debug
+    debug_mode = st.checkbox("🐛 Modo Debug", value=False)
+    if debug_mode:
+        st.markdown("**Estado del Chat:**")
+        st.write(f"Chat inicializado: {st.session_state.chat is not None}")
+        st.write(f"API configurada: {st.session_state.api_key_configured}")
+        st.write(f"Mensajes: {len(st.session_state.messages)}")
+
     st.markdown("---")
     st.markdown("""
     ### 📚 Acerca de MateTutor
-    
+
     MateTutor es un tutor de matemáticas que usa el método socrático para ayudarte a resolver problemas del ICFES.
-    
+
     **No te dará las respuestas directamente**, sino que te guiará con preguntas para que descubras la solución por ti mismo.
-    
+
     ¡Así aprenderás mejor! 🎓
     """)
-    
+
     st.markdown("---")
     st.markdown("Desarrollado con ❤️ usando Streamlit y Google Gemini AI")
 
