@@ -138,6 +138,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.chat = None
     st.session_state.api_key_configured = False
+    st.session_state.pending_image = None
 
 # Configurar la API de Gemini
 def configure_gemini():
@@ -197,54 +198,63 @@ for message in st.session_state.messages:
 uploaded_file = st.file_uploader(
     "📎 Adjuntar imagen de la pregunta (opcional)",
     type=["png", "jpg", "jpeg"],
-    help="Sube una imagen de la pregunta del ICFES",
-    key="image_uploader"
+    help="Sube una imagen de la pregunta del ICFES"
 )
 
-# Mostrar vista previa de la imagen si se subió
+# Procesar imagen cuando se sube
 if uploaded_file is not None:
     st.image(uploaded_file, caption="Vista previa de la imagen", use_container_width=True)
-    if st.button("✅ Enviar imagen", type="primary", use_container_width=True):
-        # Procesar y enviar solo la imagen
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        prompt_with_image = st.text_input(
+            "Escribe tu pregunta sobre la imagen (opcional):",
+            placeholder="Ej: ¿Cómo resuelvo este problema?",
+            key="prompt_with_image"
+        )
+    with col2:
+        send_image_button = st.button("📤 Enviar", type="primary", use_container_width=True)
+
+    if send_image_button:
+        # Procesar la imagen
         image = process_image(uploaded_file)
         if image:
+            # Preparar el mensaje
+            message_content = prompt_with_image if prompt_with_image else "📷 [Imagen adjunta - ayúdame con este problema]"
+            message_parts = []
+
+            # Agregar texto si existe
+            if prompt_with_image:
+                message_parts.append(prompt_with_image)
+            else:
+                message_parts.append("Ayúdame con este problema de matemáticas")
+
+            # Agregar imagen
+            message_parts.append(image)
+
             # Agregar mensaje del usuario al historial
-            user_message = {"role": "user", "content": "📷 [Imagen adjunta]", "image": image}
+            user_message = {"role": "user", "content": message_content, "image": image}
             st.session_state.messages.append(user_message)
 
-            # Mostrar mensaje del usuario
-            with st.chat_message("user"):
-                st.markdown("📷 [Imagen adjunta]")
-                st.image(image, use_container_width=True)
-
             # Generar respuesta del asistente
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                full_response = ""
-
+            with st.spinner("MateTutor está analizando la imagen..."):
                 try:
-                    # Enviar solo la imagen a Gemini con streaming
-                    response = st.session_state.chat.send_message([image], stream=True)
+                    # Enviar mensaje a Gemini
+                    response = st.session_state.chat.send_message(message_parts, stream=True)
 
-                    # Mostrar respuesta en streaming
+                    full_response = ""
                     for chunk in response:
                         if chunk.text:
                             full_response += chunk.text
-                            message_placeholder.markdown(full_response + "▌")
 
-                    # Mostrar respuesta final
-                    message_placeholder.markdown(full_response)
+                    # Agregar respuesta del asistente al historial
+                    st.session_state.messages.append({"role": "assistant", "content": full_response})
 
                 except Exception as e:
-                    error_message = "Lo siento, algo salió mal. Por favor, intenta de nuevo. 😔"
-                    message_placeholder.markdown(error_message)
-                    full_response = error_message
-                    st.error(f"Error: {str(e)}")
+                    error_message = f"Lo siento, algo salió mal: {str(e)}"
+                    st.session_state.messages.append({"role": "assistant", "content": error_message})
 
-            # Agregar respuesta del asistente al historial
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-            # Limpiar y recargar
+            # Recargar para mostrar los mensajes
             st.rerun()
 
 # Input del usuario (texto)
