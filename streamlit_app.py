@@ -197,63 +197,98 @@ for message in st.session_state.messages:
 uploaded_file = st.file_uploader(
     "📎 Adjuntar imagen de la pregunta (opcional)",
     type=["png", "jpg", "jpeg"],
-    help="Sube una imagen de la pregunta del ICFES"
+    help="Sube una imagen de la pregunta del ICFES",
+    key="image_uploader"
 )
 
-# Input del usuario
+# Mostrar vista previa de la imagen si se subió
+if uploaded_file is not None:
+    st.image(uploaded_file, caption="Vista previa de la imagen", use_container_width=True)
+    if st.button("✅ Enviar imagen", type="primary", use_container_width=True):
+        # Procesar y enviar solo la imagen
+        image = process_image(uploaded_file)
+        if image:
+            # Agregar mensaje del usuario al historial
+            user_message = {"role": "user", "content": "📷 [Imagen adjunta]", "image": image}
+            st.session_state.messages.append(user_message)
+
+            # Mostrar mensaje del usuario
+            with st.chat_message("user"):
+                st.markdown("📷 [Imagen adjunta]")
+                st.image(image, use_container_width=True)
+
+            # Generar respuesta del asistente
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                full_response = ""
+
+                try:
+                    # Enviar solo la imagen a Gemini con streaming
+                    response = st.session_state.chat.send_message([image], stream=True)
+
+                    # Mostrar respuesta en streaming
+                    for chunk in response:
+                        if chunk.text:
+                            full_response += chunk.text
+                            message_placeholder.markdown(full_response + "▌")
+
+                    # Mostrar respuesta final
+                    message_placeholder.markdown(full_response)
+
+                except Exception as e:
+                    error_message = "Lo siento, algo salió mal. Por favor, intenta de nuevo. 😔"
+                    message_placeholder.markdown(error_message)
+                    full_response = error_message
+                    st.error(f"Error: {str(e)}")
+
+            # Agregar respuesta del asistente al historial
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+            # Limpiar y recargar
+            st.rerun()
+
+# Input del usuario (texto)
 if prompt := st.chat_input("Escribe tu pregunta o describe la imagen..."):
     # Preparar el contenido del mensaje
     message_content = prompt
     message_parts = [prompt]
-    
-    # Procesar imagen si fue subida
-    image_to_display = None
-    if uploaded_file is not None:
-        image = process_image(uploaded_file)
-        if image:
-            image_to_display = image
-            message_parts.append(image)
-    
+
     # Agregar mensaje del usuario al historial
     user_message = {"role": "user", "content": message_content}
-    if image_to_display:
-        user_message["image"] = image_to_display
     st.session_state.messages.append(user_message)
-    
+
     # Mostrar mensaje del usuario
     with st.chat_message("user"):
         st.markdown(message_content)
-        if image_to_display:
-            st.image(image_to_display, use_container_width=True)
-    
+
     # Generar respuesta del asistente
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
-        
+
         try:
             # Enviar mensaje a Gemini con streaming
             response = st.session_state.chat.send_message(message_parts, stream=True)
-            
+
             # Mostrar respuesta en streaming
             for chunk in response:
                 if chunk.text:
                     full_response += chunk.text
                     message_placeholder.markdown(full_response + "▌")
-            
+
             # Mostrar respuesta final
             message_placeholder.markdown(full_response)
-            
+
         except Exception as e:
             error_message = "Lo siento, algo salió mal. Por favor, intenta de nuevo. 😔"
             message_placeholder.markdown(error_message)
             full_response = error_message
             st.error(f"Error: {str(e)}")
-    
+
     # Agregar respuesta del asistente al historial
     st.session_state.messages.append({"role": "assistant", "content": full_response})
-    
-    # Limpiar el file uploader después de enviar (rerun)
+
+    # Recargar
     st.rerun()
 
 # Botón para limpiar el chat (en la barra lateral)
